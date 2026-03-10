@@ -2,14 +2,13 @@ const std = @import("std");
 const zqlite = @import("zqlite.zig");
 
 const Conn = zqlite.Conn;
-const Thread = std.Thread;
 const Allocator = std.mem.Allocator;
 
 pub const Pool = struct {
     conns: []Conn,
     available: usize,
-    mutex: Thread.Mutex,
-    cond: Thread.Condition,
+    mutex: std.atomic.Mutex,
+    cond: std.Io.Condition,
     allocator: Allocator,
 
     pub const Config = struct {
