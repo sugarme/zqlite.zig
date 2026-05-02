@@ -1,5 +1,6 @@
 .{
     .name = .zqlite,
+    .minimum_zig_version = "0.16.0",
     .paths = .{
         "LICENSE",
         "build.zig",

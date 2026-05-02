@@ -2,13 +2,15 @@ const std = @import("std");
 const zqlite = @import("zqlite.zig");
 
 const Conn = zqlite.Conn;
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 pub const Pool = struct {
+    io: Io,
     conns: []Conn,
     available: usize,
-    mutex: std.atomic.Mutex,
-    cond: std.Io.Condition,
+    mutex: Io.Mutex,
+    cond: Io.Condition,
     allocator: Allocator,
 
     pub const Config = struct {
@@ -21,7 +23,7 @@ pub const Pool = struct {
         on_first_connection_context: ?*anyopaque = null,
     };
 
-    pub fn init(allocator: Allocator, config: Config) !*Pool {
+    pub fn init(allocator: Allocator, io: Io, config: Config) !*Pool {
         const pool = try allocator.create(Pool);
         errdefer allocator.destroy(pool);
 
@@ -30,8 +32,9 @@ pub const Pool = struct {
         errdefer allocator.free(conns);
 
         pool.* = .{
-            .cond = .{},
-            .mutex = .{},
+            .io = io,
+            .cond = .init,
+            .mutex = .init,
             .conns = conns,
             .available = size,
             .allocator = allocator,
@@ -77,32 +80,34 @@ pub const Pool = struct {
         allocator.destroy(self);
     }
 
-    pub fn acquire(self: *Pool) Conn {
-        self.mutex.lock();
+    pub fn acquire(self: *Pool) Io.Cancelable!Conn {
+        const io = self.io;
+        try self.mutex.lock(io);
         while (true) {
             const conns = self.conns;
             const available = self.available;
             if (available == 0) {
-                self.cond.wait(&self.mutex);
+                try self.cond.wait(io, &self.mutex);
                 continue;
             }
             const index = available - 1;
             const conn = conns[index];
             self.available = index;
-            self.mutex.unlock();
+            self.mutex.unlock(io);
             return conn;
         }
     }
 
-    pub fn release(self: *Pool, conn: Conn) void {
-        self.mutex.lock();
+    pub fn release(self: *Pool, conn: Conn) Io.Cancelable!void {
+        const io = self.io;
+        try self.mutex.lock(io);
 
         var conns = self.conns;
         const available = self.available;
         conns[available] = conn;
         self.available = available + 1;
-        self.mutex.unlock();
-        self.cond.signal();
+        self.mutex.unlock(io);
+        self.cond.signal(io);
     }
 };
 
@@ -113,7 +118,8 @@ test "pool" {
         .b = 6,
     };
 
-    var pool = try Pool.init(t.allocator, .{
+    const io = t.io;
+    var pool = try Pool.init(t.allocator, io, .{
         .size = 2,
         .path = "/tmp/zqlite.test",
         .on_connection = &testPoolEachConnection,
@@ -131,8 +137,8 @@ test "pool" {
     t2.join();
     t3.join();
 
-    const c1 = pool.acquire();
-    defer c1.release();
+    const c1 = try pool.acquire();
+    defer c1.release() catch {};
 
     const row = (try c1.row("select cnt from pool_test", .{})).?;
     try t.expectEqual(@as(i64, 3000), row.int(0));
@@ -148,12 +154,12 @@ const TestCallbackContext = struct {
 
 fn testPool(p: *Pool) void {
     for (0..1000) |_| {
-        const conn = p.acquire();
+        const conn = p.acquire() catch unreachable;
         conn.execNoArgs("update pool_test set cnt = cnt + 1") catch |err| {
             std.debug.print("update err: {any}\n", .{err});
             unreachable;
         };
-        p.release(conn);
+        p.release(conn) catch unreachable;
     }
 }
 

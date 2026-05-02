@@ -24,8 +24,8 @@ pub const Conn = struct {
         return .{ .conn = conn.? };
     }
 
-    pub fn release(self: Conn) void {
-        self._pool.?.release(self);
+    pub fn release(self: Conn) std.Io.Cancelable!void {
+        try self._pool.?.release(self);
     }
 
     pub fn close(self: Conn) void {
