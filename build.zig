@@ -15,6 +15,17 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
+    // Zig 0.17 removed the @cImport builtin; C headers are translated via the
+    // build system instead. Expose sqlite3.h as the "c" module the source imports.
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("lib/sqlite3.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    translate_c.addIncludePath(lib_path);
+    mod_zqlite.addImport("c", translate_c.createModule());
+
     const mod_sqlite = b.createModule(.{
         .target = target,
         .optimize = optimize,
